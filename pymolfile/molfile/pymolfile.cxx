@@ -38,30 +38,41 @@ molfile_plugin_t** plugin_list;
 #define PyInt_AsLong PyLong_AsLong
 #define PyString_FromString PyBytes_FromString
 #define PyInt_FromLong PyLong_FromLong
-
+int initNumpyArray(void){
+    if(PyArray_API == NULL)
+    {
+        import_array();
+    }
+}
 void del_molfile_plugin_list(PyObject* molcapsule)
 {
     plugin_list = (molfile_plugin_t**) PyMolfileCapsule_AsVoidPtr(molcapsule);   
-    free(plugin_list); 
+    //free(plugin_list); 
     Py_XDECREF(molcapsule);
 }
 void del_molfile_file_handle(PyObject* molcapsule)
 {
     void *file_handle = (void*) PyMolfileCapsule_AsVoidPtr(molcapsule);   
-    free(file_handle); 
+    //free(file_handle); 
     Py_XDECREF(molcapsule);
 }
 #else
+void initNumpyArray(void){
+    if(PyArray_API == NULL)
+    {
+        import_array();
+    }
+}
 void del_molfile_plugin_list(void* molcapsule)
 {
     plugin_list = (molfile_plugin_t**) PyMolfileCapsule_AsVoidPtr((PyObject*)molcapsule);   
-    free(plugin_list); 
+    //free(plugin_list); 
     Py_XDECREF(molcapsule);
 }
 void del_molfile_file_handle(void* molcapsule)
 {
     void *file_handle = PyMolfileCapsule_AsVoidPtr((PyObject*)molcapsule);   
-    free(file_handle); 
+    //free(file_handle); 
     Py_XDECREF(molcapsule);
 }
 #endif
@@ -198,10 +209,66 @@ PyObject * molfile_plugin_info(PyObject* molcapsule, int plugin_no) {
     return tuple;
 }
 
+PyObject* write_fill_structure(PyObject* molpack, PyObject* molarray)
+{
+    //Py_Initialize();
+    initNumpyArray();
+    int options = 0;
+    options = MOLFILE_INSERTION | MOLFILE_OCCUPANCY | MOLFILE_BFACTOR |
+              MOLFILE_ALTLOC | MOLFILE_ATOMICNUMBER | MOLFILE_BONDSSPECIAL |
+              MOLFILE_MASS | MOLFILE_CHARGE;
+    molfile_plugin_t* plugin;
+    void* file_handle;
+    molfile_atom_t* data;
+    int numatoms, status;
+    // Access plugin_handle values
+    MolObject* plugin_handle = (MolObject*) molpack;
+    if (plugin_handle->plugin) {
+        plugin = (molfile_plugin_t*) PyMolfileCapsule_AsVoidPtr(plugin_handle->plugin);
+    } else {
+        PyErr_Format(PyExc_IOError, "molfile plugin is not active.");
+	Py_RETURN_NONE;
+    } 
+    if (plugin_handle->file_handle) {
+        file_handle = (void*) PyMolfileCapsule_AsVoidPtr(plugin_handle->file_handle);
+    } else {
+        PyErr_Format(PyExc_IOError, "no file handle in molfile plugin handle.");
+	Py_RETURN_NONE;
+    } 
+    numatoms = (int) PyArray_DIM((PyArrayObject*)molarray, 1);
+    if (numatoms<0){
+        if (plugin_handle->natoms) {
+	    numatoms = plugin_handle->natoms;
+            if (numatoms<0){
+	        PyErr_Format(PyExc_IOError, "no assigned number of atoms in molfile plugin handle.");
+	        Py_RETURN_NONE;
+	    }
+	} else {
+            PyErr_Format(PyExc_AttributeError, "plugin does not have number of atoms information.");
+	    Py_RETURN_NONE;
+	}
+    }
+    // Aquire memory pointer of molfile_atom_t struct from numpy array
+    data = (molfile_atom_t*) PyArray_DATA((PyArrayObject*)molarray);
+    // Write array values in molfile_atom_t
+    if (plugin->write_structure) {
+        status = plugin->write_structure(file_handle, options, data);
+        // Check if the status is ok 
+        if (status!=0){
+            PyErr_Format(PyExc_IOError, "Error in write_structure function of plugin.");
+	    Py_RETURN_FALSE;
+        }
+	Py_RETURN_TRUE;
+    } else {
+        PyErr_Format(PyExc_AttributeError, "molfile plugin does not have write_structure function.");
+	Py_RETURN_FALSE;
+    }
+}
+
 PyObject* read_fill_structure(PyObject* molpack, PyObject* prototype)
 {
     //Py_Initialize();
-    import_array();
+    initNumpyArray();
     int options = 0;
     molfile_plugin_t* plugin;
     void* file_handle;
@@ -213,14 +280,12 @@ PyObject* read_fill_structure(PyObject* molpack, PyObject* prototype)
     MolObject* plugin_handle = (MolObject*) molpack;
     if (plugin_handle->plugin) {
         plugin = (molfile_plugin_t*) PyMolfileCapsule_AsVoidPtr(plugin_handle->plugin);
-        //plugin = plugin_handle->plugin;   
     } else {
         PyErr_Format(PyExc_IOError, "molfile plugin is not active.");
 	return NULL;
     } 
     if (plugin_handle->file_handle) {
         file_handle = (void*) PyMolfileCapsule_AsVoidPtr(plugin_handle->file_handle);
-        //file_handle = plugin_handle->file_handle;
     } else {
         PyErr_Format(PyExc_IOError, "no file handle in molfile plugin handle.");
 	return NULL; 
@@ -264,7 +329,7 @@ PyObject* read_fill_structure(PyObject* molpack, PyObject* prototype)
 
 PyObject* read_fill_bonds(PyObject* molpack)
 {
-    import_array();
+    initNumpyArray();
     int options = 0;
     molfile_plugin_t* plugin;
     void* file_handle;
@@ -357,9 +422,84 @@ PyObject* read_fill_bonds(PyObject* molpack)
     }
 }
 
+PyObject* write_fill_bonds(PyObject* molpack, PyObject* moldict)
+{
+    if(!PyDict_Check(moldict)) {
+        PyErr_Format(PyExc_IOError, "argument 2 is not a Python dictionary.");
+	Py_RETURN_FALSE;
+    }
+    initNumpyArray();
+    molfile_plugin_t* plugin;
+    void* file_handle;
+    molfile_atom_t* data;
+    int numatoms, status;
+    PyObject *ret = NULL;
+    // Access plugin_handle values
+    MolObject* plugin_handle = (MolObject*) molpack;
+    if (plugin_handle->plugin) {
+        plugin = (molfile_plugin_t*) PyMolfileCapsule_AsVoidPtr(plugin_handle->plugin);
+    } else {
+        PyErr_Format(PyExc_IOError, "molfile plugin is not set.");
+	return NULL;
+    } 
+    if (plugin_handle->file_handle) {
+        file_handle = (void*) PyMolfileCapsule_AsVoidPtr(plugin_handle->file_handle);
+    } else {
+        PyErr_Format(PyExc_IOError, "no file handle in molfile plugin handle.");
+	return NULL; 
+    } 
+    numatoms = plugin_handle->natoms;
+    if (plugin->write_bonds) {
+        int nbonds, *from, *to, nbondtypes;
+        int *bondtype = NULL; 
+        float *bondorder = NULL;
+        char **bondtypename = NULL;
+        // Lets see whether dictionary includes a numpy array for coords.
+	PyObject *from_arr = PyDict_GetItemString(moldict, "from");
+	PyObject *to_arr = PyDict_GetItemString(moldict, "to");
+	PyObject *bondorder_arr = PyDict_GetItemString(moldict, "bondorder");
+	PyObject *bondtype_arr = PyDict_GetItemString(moldict, "bondtype");
+	PyObject *bondtypename_arr = PyDict_GetItemString(moldict, "bondtypename");
+	if(from_arr && to_arr) {
+	    nbonds = (int) PyArray_DIMS((PyArrayObject*)from_arr)[0];
+	    from = (int*) PyArray_DATA((PyArrayObject*)from_arr);
+	    to = (int*) PyArray_DATA((PyArrayObject*)to_arr);
+	}
+	if(bondorder_arr) {
+	    bondorder = (float*) PyArray_DATA((PyArrayObject*)bondorder_arr);
+	}	
+	nbondtypes = 0;
+	if(bondtype_arr) {
+	    nbondtypes = (int) PyArray_DIMS((PyArrayObject*)bondtype_arr)[0];
+	    bondtype = (int*) PyArray_DATA((PyArrayObject*)bondtype_arr);
+	}	
+	if(bondtypename_arr) {
+	    nbondtypes = (int) PyArray_DIMS((PyArrayObject*)bondtypename_arr)[0];
+	    bondtypename = (char**) PyArray_DATA((PyArrayObject*)bondtypename_arr);
+	}	
+	if (nbonds>0) {
+	    if ((status = plugin->write_bonds(file_handle, nbonds, from, to, 
+       	                                      bondorder, bondtype, nbondtypes, bondtypename))) {
+                PyErr_Format(PyExc_IOError, "Error accessing write_bonds function of plugin.");
+                Py_RETURN_NONE;
+	    }
+            if (status!=0){
+                PyErr_Format(PyExc_IOError, "Error in write_bonds function of plugin.");
+	        Py_RETURN_NONE;
+            }
+            Py_RETURN_TRUE;
+	} else {
+            Py_RETURN_FALSE;
+	}
+    } else {
+        PyErr_Format(PyExc_AttributeError, "molfile plugin does not have write_bonds function.");
+        Py_RETURN_NONE;
+    }
+}
+
 PyObject* read_fill_angles(PyObject* molpack)
 {
-    import_array();
+    initNumpyArray();
     int options = 0;
     molfile_plugin_t* plugin;
     void* file_handle;
@@ -556,9 +696,394 @@ PyObject* read_fill_angles(PyObject* molpack)
 }
 
 
+PyObject* write_fill_angles(PyObject* molpack, PyObject* moldict)
+{
+    if(!PyDict_Check(moldict)) {
+        PyErr_Format(PyExc_IOError, "argument 2 is not a Python dictionary.");
+	Py_RETURN_FALSE;
+    }
+    initNumpyArray();
+    int options = 0;
+    molfile_plugin_t* plugin;
+    void* file_handle;
+    molfile_atom_t* data;
+    int numatoms, status;
+    // Access plugin_handle values
+    MolObject* plugin_handle = (MolObject*) molpack;
+    if (plugin_handle->plugin) {
+        plugin = (molfile_plugin_t*) PyMolfileCapsule_AsVoidPtr(plugin_handle->plugin);
+    } else {
+        PyErr_Format(PyExc_IOError, "molfile plugin is not active.");
+	return NULL;
+    } 
+    if (plugin_handle->file_handle) {
+        file_handle = (void*) PyMolfileCapsule_AsVoidPtr(plugin_handle->file_handle);
+    } else {
+        PyErr_Format(PyExc_IOError, "no file handle in molfile plugin handle.");
+	return NULL; 
+    } 
+    numatoms = plugin_handle->natoms;
+    // Check if there is write_angles support in this plugin
+    if (plugin->write_angles) {
+	// Angles
+        int numangles;
+        int *angles = NULL;
+	int *angletypes = NULL;
+        int numangletypes;
+	const char **angletypenames = NULL; 
+	// Dihedrals
+	int numdihedrals; 
+	int *dihedrals = NULL;
+	int *dihedraltypes = NULL;
+	int numdihedraltypes;
+        const char **dihedraltypenames = NULL; 
+	// Impropers
+	int numimpropers;
+        int *impropers = NULL;
+        int *impropertypes = NULL;
+	int numimpropertypes;
+	const char **impropertypenames = NULL;
+	// Cterms
+	int ndimcterms = 2;
+        int numcterms, ctermcols, ctermrows;
+	int *cterms = NULL; 
+	// Initilize zeros to number of angles, dihedrals, so on ...
+	numangles = 0;
+	numangletypes = 0;
+	numdihedrals = 0;
+	numdihedraltypes = 0;
+	numimpropers = 0;
+	numimpropertypes = 0;
+	numcterms = 0;
+        // Lets see whether dictionary includes a numpy arrays.
+	PyObject *angles_arr = PyDict_GetItemString(moldict, "angles");
+	PyObject *angletypes_arr = PyDict_GetItemString(moldict, "angletypes");
+	PyObject *angletypenames_arr = PyDict_GetItemString(moldict, "angletypenames");
+	PyObject *dihedrals_arr = PyDict_GetItemString(moldict, "dihedrals");
+	PyObject *dihedraltypes_arr = PyDict_GetItemString(moldict, "dihedraltypes");
+	PyObject *dihedraltypenames_arr = PyDict_GetItemString(moldict, "dihedraltypenames");
+	PyObject *impropers_arr = PyDict_GetItemString(moldict, "impropers");
+	PyObject *impropertypes_arr = PyDict_GetItemString(moldict, "impropertypes");
+	PyObject *impropertypenames_arr = PyDict_GetItemString(moldict, "impropertypenames");
+	PyObject *cterms_arr = PyDict_GetItemString(moldict, "cterms");
+	// Even if there is no info for angles/dihedrals/impropers, this function will let the 
+	// the arrays to be NULL on plugin level.
+	// We will do the checking one-by-one for all available numpy arrays
+	if(angles_arr) {
+	    numangles = (int) PyArray_DIMS((PyArrayObject*)angles_arr)[0];
+	    angles = (int*) PyArray_DATA((PyArrayObject*)angles_arr);
+	}
+	if(angletypes_arr) {
+	    numangletypes = (int) PyArray_DIMS((PyArrayObject*)angletypes_arr)[0];
+	    angletypes = (int*) PyArray_DATA((PyArrayObject*)angletypes_arr);
+	}
+	if(angletypenames_arr) {
+	    numangletypes = (int) PyArray_DIMS((PyArrayObject*)angletypenames_arr)[0];
+	    angletypenames = (const char**) PyArray_DATA((PyArrayObject*)angletypenames_arr);
+	}
+	if(dihedrals_arr) {
+	    numdihedrals = (int) PyArray_DIMS((PyArrayObject*)dihedrals_arr)[0];
+	    dihedrals = (int*) PyArray_DATA((PyArrayObject*)dihedrals_arr);
+	}
+	if(dihedraltypes_arr) {
+	    numdihedraltypes = (int) PyArray_DIMS((PyArrayObject*)dihedraltypes_arr)[0];
+	    dihedraltypes = (int*) PyArray_DATA((PyArrayObject*)dihedraltypes_arr);
+	}
+	if(dihedraltypenames_arr) {
+	    numdihedraltypes = (int) PyArray_DIMS((PyArrayObject*)dihedraltypenames_arr)[0];
+	    dihedraltypenames = (const char**) PyArray_DATA((PyArrayObject*)dihedraltypenames_arr);
+	}
+	if(impropers_arr) {
+	    numimpropers = (int) PyArray_DIMS((PyArrayObject*)impropers_arr)[0];
+	    impropers = (int*) PyArray_DATA((PyArrayObject*)impropers_arr);
+	}
+	if(impropertypes_arr) {
+	    numimpropertypes = (int) PyArray_DIMS((PyArrayObject*)impropertypes_arr)[0];
+	    impropertypes = (int*) PyArray_DATA((PyArrayObject*)impropertypes_arr);
+	}
+	if(impropertypenames_arr) {
+	    numimpropertypes = (int) PyArray_DIMS((PyArrayObject*)impropertypenames_arr)[0];
+	    impropertypenames = (const char**) PyArray_DATA((PyArrayObject*)impropertypenames_arr);
+	}
+	// Cterms
+	if(cterms_arr) {
+	    ndimcterms = (int) PyArray_NDIM((PyArrayObject*)cterms_arr);
+	    numcterms = (int) PyArray_SIZE((PyArrayObject*)cterms_arr);
+	    if (ndimcterms>1) {
+	        ctermrows = (int) PyArray_DIMS((PyArrayObject*)cterms_arr)[0];
+	        ctermcols = (int) PyArray_DIMS((PyArrayObject*)cterms_arr)[1];
+	    } else {
+		ctermrows = 0;
+		ctermcols = 0;
+	    }
+	    cterms = (int*) PyArray_DATA((PyArrayObject*)cterms_arr);
+	}
+	// Calling write_angles to write the information
+        if ((status = plugin->write_angles(file_handle, numangles, angles, angletypes,
+                                           numangletypes, angletypenames, numdihedrals,
+                                           dihedrals, dihedraltypes, numdihedraltypes,
+                                           dihedraltypenames, numimpropers, impropers,        
+                                           impropertypes, numimpropertypes, impropertypenames,
+                                           numcterms, cterms, ctermcols, ctermrows))) {
+            PyErr_Format(PyExc_IOError, "Error accessing read_angles function of plugin.");
+            Py_RETURN_NONE;
+        }
+        Py_RETURN_TRUE;
+    } else {
+        PyErr_Format(PyExc_AttributeError, "molfile plugin does not have read_angles function.");
+        Py_RETURN_NONE;
+    }
+}
+
+
+PyObject* write_fill_timestep(PyObject* molpack, PyObject* moldict)
+{
+    if(!PyDict_Check(moldict)) {
+        PyErr_Format(PyExc_IOError, "argument 2 is not a Python dictionary.");
+	Py_RETURN_FALSE;
+    }
+    initNumpyArray();
+    molfile_plugin_t* plugin;
+    void* file_handle;
+    int numatoms, status;
+    int nd;
+    int i, d;
+    // Access plugin_handle values
+    MolObject* plugin_handle = (MolObject*) molpack;
+    if (plugin_handle->plugin) {
+        plugin = (molfile_plugin_t*) PyMolfileCapsule_AsVoidPtr(plugin_handle->plugin);
+    } else {
+        PyErr_Format(PyExc_IOError, "molfile plugin is not active.");
+	Py_RETURN_NONE;
+    } 
+    if (plugin_handle->file_handle) {
+        file_handle = (void*) PyMolfileCapsule_AsVoidPtr(plugin_handle->file_handle);
+    } else {
+        PyErr_Format(PyExc_IOError, "no file handle in molfile plugin handle.");
+	Py_RETURN_NONE;
+    } 
+    if (plugin_handle->natoms) {
+        numatoms = plugin_handle->natoms;
+    } else { 
+        PyErr_Format(PyExc_IOError, "no assigned number of atoms in molfile plugin handle.");
+	Py_RETURN_NONE;
+    }
+    if (plugin->write_timestep) {
+        PyObject *coords_arr = NULL;
+	npy_intp n, m, i, j;
+	int ndim = 1;
+        // Lets see whether dictionary includes a numoy array for coords.
+	// We will use the first dimension as the loop over write_timestep. 
+	coords_arr = PyDict_GetItemString(moldict, "coords");
+	if(coords_arr) {
+	    ndim = (int) PyArray_NDIM((PyArrayObject*)coords_arr);
+	} else {
+	    // It seams someone forgot to put coords in dictionary.
+	    // Nothing to write to output file
+	    // Return False in this case
+	    Py_RETURN_FALSE;
+	}
+	int numsteps = 0;
+	int numatoms = 0;
+	// Check if dimension is correct for numpy array
+	// If the array dimension is not correct return False.
+	if(ndim>2){
+	    n = PyArray_DIMS((PyArrayObject*)coords_arr)[0];
+	    m = PyArray_DIMS((PyArrayObject*)coords_arr)[1];
+	    numsteps = (int)n;
+	    numatoms = (int)m;
+	} 
+	else if(ndim>1){
+	    n = 1;
+	    m = PyArray_DIMS((PyArrayObject*)coords_arr)[0];
+	    numsteps = (int)n;
+	    numatoms = (int)m;
+	} else {
+	    Py_RETURN_FALSE;
+	}
+	//if(numsteps>0){
+        //    molfile_timestep_t timestep;
+	//} else {
+	//    Py_RETURN_FALSE;
+	//}
+	// It seams we have coordinates in a numpy array and
+	// if we have at least one snapshot of coordinates, we can write it.
+	// Set if the velocities can be written with this plugin
+	int has_velocities = 0;
+	unsigned int total_steps = 1;
+	unsigned int bytes_per_step = 0;
+	double a_sca, b_sca, c_sca, alpha_sca, beta_sca, gamma_sca, time_sca;
+	//molfile_timestep_metadata_t timestep_metadata;
+        PyObject *bytes_per_step_arr = PyDict_GetItemString(moldict, "bytes_per_step");
+	if(bytes_per_step_arr) { 
+            bytes_per_step = (unsigned int)PyLong_AsLong(bytes_per_step_arr);
+	    //timestep_metadata.avg_bytes_per_timestep = bytes_per_step;
+	}
+	PyObject *total_steps_arr = PyDict_GetItemString(moldict, "total_steps");
+	if(total_steps_arr){
+	    total_steps = (unsigned int)PyLong_AsLong(total_steps_arr);
+	    //timestep_metadata.count = total_steps; 
+	}
+	PyObject *has_velocities_arr = PyDict_GetItemString(moldict, "has_velocities");
+	if(has_velocities_arr){
+	    has_velocities = (int)PyLong_AsLong(has_velocities_arr);
+	    //timestep_metadata.has_velocities = has_velocities;
+	}
+        PyObject *velocities_arr = NULL;
+	if(has_velocities > 0) { 
+	    velocities_arr = PyDict_GetItemString(moldict, "velocities");
+	}
+	// All support arrays' sizes should match the size of coords array if supplied. 
+	PyObject *a_arr = PyDict_GetItemString(moldict, "A");
+	if(a_arr)
+	    if(PyArray_Check(a_arr)){
+	        if(n != PyArray_DIMS((PyArrayObject*)a_arr)[0])
+	        Py_RETURN_FALSE;
+	    } else {
+		a_sca = PyFloat_AsDouble(a_arr);
+	    }
+	PyObject *b_arr = PyDict_GetItemString(moldict, "B");
+	if(b_arr)
+	    if(PyArray_Check(b_arr)){
+	        if(n != PyArray_DIMS((PyArrayObject*)b_arr)[0])
+	            Py_RETURN_FALSE;
+	    } else {
+		b_sca = PyFloat_AsDouble(b_arr);
+	    }
+	PyObject *c_arr = PyDict_GetItemString(moldict, "C");
+	if(c_arr)
+	    if(PyArray_Check(c_arr)){
+	        if(n != PyArray_DIMS((PyArrayObject*)c_arr)[0])
+	            Py_RETURN_FALSE;
+	    } else {
+		c_sca = PyFloat_AsDouble(c_arr);
+	    }
+	PyObject *alpha_arr = PyDict_GetItemString(moldict, "alpha");
+	if(alpha_arr)
+	    if(PyArray_Check(alpha_arr)){
+	        if(n != PyArray_DIMS((PyArrayObject*)alpha_arr)[0])
+	            Py_RETURN_FALSE;
+	    } else {
+		alpha_sca = PyFloat_AsDouble(alpha_arr);
+	    }
+	PyObject *beta_arr = PyDict_GetItemString(moldict, "beta");
+	if(beta_arr)
+	    if(PyArray_Check(beta_arr)){
+	        if(n != PyArray_DIMS((PyArrayObject*)beta_arr)[0])
+	            Py_RETURN_FALSE;
+	    } else {
+		beta_sca = PyFloat_AsDouble(beta_arr);
+	    }
+	PyObject *gamma_arr = PyDict_GetItemString(moldict, "gamma");
+	if(gamma_arr)
+	    if(PyArray_Check(gamma_arr)){
+	        if(n != PyArray_DIMS((PyArrayObject*)gamma_arr)[0])
+	            Py_RETURN_FALSE;
+	    } else {
+		gamma_sca = PyFloat_AsDouble(gamma_arr);
+	    }
+	PyObject *pt_arr = PyDict_GetItemString(moldict, "physical_time");
+	if(pt_arr)
+	    if(PyArray_Check(pt_arr)){
+	        if(n != PyArray_DIMS((PyArrayObject*)pt_arr)[0])
+	            Py_RETURN_FALSE;
+	    } else {
+		time_sca = PyFloat_AsDouble(pt_arr);
+	    }
+        molfile_timestep_t *timestep;
+	// Good old for loop over first dimension of numpy array will do the writing out.
+        for (i = 0; i < n; i++) {
+            //if (plugin->write_timestep_metadata) plugin->write_timestep_metadata(file_handle, &timestep_metadata);
+            if(a_arr){
+	        if(PyArray_Check(a_arr)){
+	            timestep->A = *(float*)(PyArray_BYTES((PyArrayObject*)a_arr) + i*PyArray_STRIDES((PyArrayObject*)a_arr)[0]);
+		} else {
+		    timestep->A = (float) a_sca;
+		}
+	    } else {
+	        timestep->A = 0.0;
+	    }
+	    if(b_arr){
+	        if(PyArray_Check(b_arr)){
+	            timestep->B = *(float*)(PyArray_BYTES((PyArrayObject*)b_arr) + i*PyArray_STRIDES((PyArrayObject*)b_arr)[0]);
+		} else {
+		    timestep->B = (float) b_sca;
+		}
+	    } else {
+	        timestep->B = (float) 0.0;
+	    }
+	    if(c_arr){
+	        if(PyArray_Check(c_arr)){
+	            timestep->C = *(float*)(PyArray_BYTES((PyArrayObject*)c_arr) + i*PyArray_STRIDES((PyArrayObject*)c_arr)[0]);
+		} else {
+		    timestep->C = (float) c_sca;
+		}
+	    } else {
+	        timestep->C = (float) 0.0;
+	    }
+	    if(alpha_arr){
+	        if(PyArray_Check(alpha_arr)){
+	            timestep->alpha = *(float*)(PyArray_BYTES((PyArrayObject*)alpha_arr) + i*PyArray_STRIDES((PyArrayObject*)alpha_arr)[0]);
+		} else {
+		    timestep->alpha = (float) alpha_sca;
+		}
+	    } else {
+	        timestep->alpha = NULL;
+	    }
+	    if(beta_arr){
+	        if(PyArray_Check(beta_arr)){
+	            timestep->beta = *(float*)(PyArray_BYTES((PyArrayObject*)beta_arr) + i*PyArray_STRIDES((PyArrayObject*)beta_arr)[0]);
+		} else {
+		    timestep->beta = (float) beta_sca;
+		}
+	    } else {
+	        timestep->beta = NULL;
+	    }
+	    if(gamma_arr){
+	        if(PyArray_Check(gamma_arr)){
+	            timestep->gamma = *(float*)(PyArray_BYTES((PyArrayObject*)gamma_arr) + i*PyArray_STRIDES((PyArrayObject*)gamma_arr)[0]);
+		} else {
+		    timestep->gamma = (float) gamma_sca;
+		}
+	    } else {
+	        timestep->gamma = NULL;
+	    }
+	    if(pt_arr){
+	        if(PyArray_Check(pt_arr)){
+	            timestep->physical_time = *(float*)(PyArray_BYTES((PyArrayObject*)pt_arr) + i*PyArray_STRIDES((PyArrayObject*)pt_arr)[0]);
+		} else {
+		    timestep->physical_time = (float) time_sca;
+		}
+	    } else {
+	        timestep->physical_time = i;
+	    }
+	    if(has_velocities > 0) { 
+	        if(velocities_arr){
+	            if(PyArray_Check(velocities_arr)){
+                        timestep->velocities = (float*)(PyArray_BYTES((PyArrayObject*)velocities_arr) + i*PyArray_STRIDES((PyArrayObject*)velocities_arr)[0]);
+		    }
+    		}
+	    }
+	    timestep->coords = (float*)(PyArray_BYTES((PyArrayObject*)coords_arr) + i*PyArray_STRIDES((PyArrayObject*)coords_arr)[0]);
+            status = plugin->write_timestep(file_handle, timestep);
+            if (status == MOLFILE_EOF) {
+	        Py_RETURN_FALSE;
+	    }
+	    else if (status != MOLFILE_SUCCESS) {
+                PyErr_Format(PyExc_AttributeError, "Failed in calling write_timestep function of plugin.");
+	        Py_RETURN_FALSE;
+            } 
+        }
+	Py_RETURN_TRUE;
+    } else {
+        PyErr_Format(PyExc_AttributeError, "molfile plugin does not have write_timestep function.");
+	Py_RETURN_NONE;
+    }
+}
+
 PyObject* read_fill_next_timestep(PyObject* molpack)
 {
-    import_array();
+    initNumpyArray();
     molfile_plugin_t* plugin;
     void* file_handle;
     int numatoms, status;
@@ -572,20 +1097,20 @@ PyObject* read_fill_next_timestep(PyObject* molpack)
         //plugin = plugin_handle->plugin;   
     } else {
         PyErr_Format(PyExc_IOError, "molfile plugin is not active.");
-	return NULL;
+	Py_RETURN_NONE;
     } 
     if (plugin_handle->file_handle) {
         file_handle = (void*) PyMolfileCapsule_AsVoidPtr(plugin_handle->file_handle);
         //file_handle = plugin_handle->file_handle;
     } else {
         PyErr_Format(PyExc_IOError, "no file handle in molfile plugin handle.");
-	return NULL; 
+	Py_RETURN_NONE;
     } 
     if (plugin_handle->natoms) {
         numatoms = plugin_handle->natoms;
     } else { 
         PyErr_Format(PyExc_IOError, "no assigned number of atoms in molfile plugin handle.");
-	return NULL;
+	Py_RETURN_NONE;
     }
     if (plugin->read_next_timestep) {
         PyArrayInterface *inter = NULL;

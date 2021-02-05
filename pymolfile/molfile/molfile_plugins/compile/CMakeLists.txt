@@ -172,6 +172,7 @@ if(UNIX)
    message(MAKE_COMMAND= "make dynlibs staticlibs bins \"ARCH = ${TARGET_ARCH}\" \"COPTO = ${TARGET_COPT} \" \"LOPTO = ${TARGET_LOPT} \" \"CC = ${CMAKE_C_COMPILER} \" \"CXX =     ${CMAKE_CXX_COMPILER} \" \"DEF = ${TARGET_DEF}\" \"CCFLAGS = ${TARGET_CFLAGS} \" \"CXXFLAGS = ${TARGET_CXXFLG} \" \"AR = ${TARGET_AR}\" \"NM = ${TARGET_NM}\" \"RANLIB = ${TARGET_RANLIB}\" \"LIBTOOL = ${TARGET_LIBTOOL} \" ${TARGET_MOL_LIBS}")
    add_custom_command( 
       OUTPUT ${LIB_MOLFILE_FILES}
+      COMMAND ${CMAKE_SOURCE_DIR}/molfile_plugins/compile/silence_plugins.sh
       COMMAND make dynlibs staticlibs bins \"ARCH = ${TARGET_ARCH}\" \"COPTO = ${TARGET_COPT} \" \"LOPTO = ${TARGET_LOPT} \" \"CC = ${CMAKE_C_COMPILER} \" \"CXX = ${CMAKE_CXX_COMPILER} \" \"DEF = ${TARGET_DEF}\" \"CCFLAGS = ${TARGET_CFLAGS} \" \"CXXFLAGS = ${TARGET_CXXFLG} \" \"AR = ${TARGET_AR}\" \"NM = ${TARGET_NM}\" \"RANLIB = ${TARGET_RANLIB}\" \"LIBTOOL = ${TARGET_LIBTOOL} \" ${TARGET_MOL_LIBS}
       COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/molfile_plugins/compile/lib ${CMAKE_CURRENT_BINARY_DIR}/lib
       COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_SOURCE_DIR}/molfile_plugins/compile/lib 
@@ -201,6 +202,7 @@ if(WINCOMP)
    endif()
    add_custom_command( 
       OUTPUT ${LIB_MOLFILE_FILES}
+      COMMAND ${CMAKE_SOURCE_DIR}/molfile_plugins/compile/silence_plugins.sh
       COMMAND ${MYMAKE} dynlibs win32staticlibs "\" ARCH = ${TARGET_ARCH} \"" "\" COPTO = /Fo \"" "\" LOPTO = /OUT: \"" "\" ${TARGET_MOL_SETTINGS} \"" "\" DEF = ${TARGET_DEF} \"" "\" AR = ${TARGET_AR} \"" "\" NM = ${TARGET_NM} \"" "\" RANLIB = ${TARGET_RANLIB} \"" "\" SHLDFLAGS = ${TARGET_SHLDFLAGS} \"" "\"${TARGET_MOL_LIBS}\""
       COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/molfile_plugins/compile/lib ${CMAKE_CURRENT_BINARY_DIR}/molfile_plugins/compile/lib
       COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_SOURCE_DIR}/molfile_plugins/compile/lib 

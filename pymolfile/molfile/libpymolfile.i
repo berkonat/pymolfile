@@ -20,7 +20,7 @@
 
 %{
 /* Python SWIG interface to libpymolfile
-   Copyright (c) 2017 Berk Onat <b.onat@warwick.ac.uk>
+   Copyright (c) 2018 Berk Onat <b.onat@warwick.ac.uk>
    Published with UIUC LICENSE
  */
 #define SWIG_FILE_WITH_INIT
@@ -79,7 +79,7 @@ extern PyObject * molfile_plugin_info(PyObject* molcapsule, int plugin_no);
 %inline %{
 PyObject * my_open_file_read(PyObject* molcapsule, char* fname, char* ftype, int natoms) {
     if (PyType_Ready(&MolObjectType) < 0)
-        return NULL;
+        Py_RETURN_NONE;
     PyTypeObject *type = &MolObjectType;
     MolObject *plugin_c;
     molfile_plugin_t* plugin = (molfile_plugin_t*) PyMolfileCapsule_AsVoidPtr(molcapsule);
@@ -97,6 +97,82 @@ PyObject * my_open_file_read(PyObject* molcapsule, char* fname, char* ftype, int
   }
 %}
 
+%feature("autodoc", "0") my_open_file_write;
+%rename (open_file_write) my_open_file_write;
+%exception my_open_file_write {
+  $action
+  if (PyErr_Occurred()) SWIG_fail;
+}
+%inline %{
+PyObject * my_open_file_write(PyObject* molcapsule, char* fname, char* ftype, int natoms) {
+    if (PyType_Ready(&MolObjectType) < 0)
+        Py_RETURN_NONE;
+    if(natoms < 1)
+        Py_RETURN_NONE;
+    PyTypeObject *type = &MolObjectType;
+    MolObject *plugin_c;
+    molfile_plugin_t* plugin = (molfile_plugin_t*) PyMolfileCapsule_AsVoidPtr(molcapsule);
+    plugin_c = (MolObject *)type->tp_alloc(type, 0);
+    plugin_c->plugin = molcapsule;
+    void *file_handle = plugin->open_file_write(fname, ftype, natoms);
+    plugin_c->file_handle = PyMolfileCapsule_FromVoidPtr(file_handle, del_molfile_file_handle);
+    if (!plugin_c->file_handle) {
+        Py_RETURN_NONE;
+    } else {
+        plugin_c->natoms = natoms;
+        return (PyObject *)plugin_c;
+    }
+  }
+%}
+
+/*
+%feature("autodoc", "0") my_set_file_write_stdout;
+%rename (set_file_write_stdout) my_set_file_write_stdout;
+%exception my_set_file_write_stdout {
+  $action
+  if (PyErr_Occurred()) SWIG_fail;
+}
+%inline %{
+PyObject * my_set_file_write_stdout(PyObject* molpack) {
+    MolObject* plugin_handle = (MolObject*) molpack;
+    PyObject* filecapsule = plugin_handle->file_handle;
+    void *file_handle = (void*) PyMolfileCapsule_AsVoidPtr(filecapsule);
+    if(file_handle->fd){
+        fclose(file_handle->fd);
+        file_handle->fd = stdout;
+    }
+    else if(file_handle->fp){
+        fclose(file_handle->fp);
+        file_handle->fp = stdout;
+    }
+    else if(file_handle->file){
+        fclose(file_handle->file);
+        file_handle->file = stdout;
+    }
+    else if(file_handle->mf){
+        fclose(file_handle->mf);
+        file_handle->mf = stdout;
+    }
+    else if(file_handle->writer){
+        if(file_handle->writer->fd){
+            fclose(file_handle->writer->fd);
+            file_handle->writer->fd = stdout;
+        }
+    }
+    else (file_handle){
+        fclose(file_handle);
+        file_handle = stdout;
+    }
+    plugin_handle->file_handle = PyMolfileCapsule_FromVoidPtr(file_handle, del_molfile_file_handle);
+    if (!plugin_c->file_handle) {
+        Py_RETURN_NONE;
+    } else {
+        return (PyObject *)plugin_handle;
+    }
+  }
+%}
+*/
+
 %feature("autodoc", "0") my_close_file_read;
 %rename (close_file_read) my_close_file_read;
 %exception my_close_file_read {
@@ -111,23 +187,52 @@ PyObject * my_close_file_read(PyObject* molpack) {
     molfile_plugin_t* plugin = (molfile_plugin_t*) PyMolfileCapsule_AsVoidPtr(plugincapsule);
     void *file_handle = (void*) PyMolfileCapsule_AsVoidPtr(filecapsule);
     plugin->close_file_read(file_handle);
-    Py_XDECREF(filecapsule);
-    Py_XDECREF(plugin_handle->file_handle);
-    return (PyObject *)plugin_handle;
+    Py_RETURN_TRUE;
   }
 %}
+
+%feature("autodoc", "0") my_close_file_write;
+%rename (close_file_write) my_close_file_write;
+%exception my_close_file_write {
+  $action
+  if (PyErr_Occurred()) SWIG_fail;
+}
+%inline %{
+PyObject * my_close_file_write(PyObject* molpack) {
+    MolObject* plugin_handle = (MolObject*) molpack;
+    PyObject* plugincapsule = plugin_handle->plugin;   
+    PyObject* filecapsule = plugin_handle->file_handle;
+    molfile_plugin_t* plugin = (molfile_plugin_t*) PyMolfileCapsule_AsVoidPtr(plugincapsule);
+    void *file_handle = (void*) PyMolfileCapsule_AsVoidPtr(filecapsule);
+    plugin->close_file_write(file_handle);
+    Py_RETURN_TRUE;
+  }
+%}
+
 
 %feature("autodoc", "0") read_fill_structure;
 extern PyObject * read_fill_structure(PyObject* molpack, PyObject* prototype);
 
+%feature("autodoc", "0") write_fill_structure;
+extern PyObject * write_fill_structure(PyObject* molpack, PyObject* molarray);
+
 %feature("autodoc", "0") read_fill_bonds;
 extern PyObject * read_fill_bonds(PyObject* molpack);
+
+%feature("autodoc", "0") write_fill_bonds;
+extern PyObject * write_fill_bonds(PyObject* molpack, PyObject* moldict);
 
 %feature("autodoc", "0") read_fill_angles;
 extern PyObject * read_fill_angles(PyObject* molpack);
 
+%feature("autodoc", "0") write_fill_angles;
+extern PyObject * write_fill_angles(PyObject* molpack, PyObject* moldict);
+
 %feature("autodoc", "0") read_fill_next_timestep;
 extern PyObject * read_fill_next_timestep(PyObject* molpack);
+
+%feature("autodoc", "0") write_fill_timestep;
+extern PyObject * write_fill_timestep(PyObject* molpack, PyObject* moldict);
 
 %feature("autodoc", "0") are_plugins_same;
 PyObject* are_plugins_same(PyObject* molpack_a, PyObject* molpack_b);

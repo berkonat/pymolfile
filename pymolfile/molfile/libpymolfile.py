@@ -131,25 +131,49 @@ def open_file_read(molcapsule: 'PyObject *', fname: 'char *', ftype: 'char *', n
     """open_file_read(molcapsule, fname, ftype, natoms) -> PyObject *"""
     return _libpymolfile.open_file_read(molcapsule, fname, ftype, natoms)
 
+def open_file_write(molcapsule: 'PyObject *', fname: 'char *', ftype: 'char *', natoms: 'int') -> "PyObject *":
+    """open_file_write(molcapsule, fname, ftype, natoms) -> PyObject *"""
+    return _libpymolfile.open_file_write(molcapsule, fname, ftype, natoms)
+
 def close_file_read(molpack: 'PyObject *') -> "PyObject *":
     """close_file_read(molpack) -> PyObject *"""
     return _libpymolfile.close_file_read(molpack)
+
+def close_file_write(molpack: 'PyObject *') -> "PyObject *":
+    """close_file_write(molpack) -> PyObject *"""
+    return _libpymolfile.close_file_write(molpack)
 
 def read_fill_structure(molpack: 'PyObject *', prototype: 'PyObject *') -> "PyObject *":
     """read_fill_structure(molpack, prototype) -> PyObject *"""
     return _libpymolfile.read_fill_structure(molpack, prototype)
 
+def write_fill_structure(molpack: 'PyObject *', molarray: 'PyObject *') -> "PyObject *":
+    """write_fill_structure(molpack, molarray) -> PyObject *"""
+    return _libpymolfile.write_fill_structure(molpack, molarray)
+
 def read_fill_bonds(molpack: 'PyObject *') -> "PyObject *":
     """read_fill_bonds(molpack) -> PyObject *"""
     return _libpymolfile.read_fill_bonds(molpack)
+
+def write_fill_bonds(molpack: 'PyObject *', moldict: 'PyObject *') -> "PyObject *":
+    """write_fill_bonds(molpack, moldict) -> PyObject *"""
+    return _libpymolfile.write_fill_bonds(molpack, moldict)
 
 def read_fill_angles(molpack: 'PyObject *') -> "PyObject *":
     """read_fill_angles(molpack) -> PyObject *"""
     return _libpymolfile.read_fill_angles(molpack)
 
+def write_fill_angles(molpack: 'PyObject *', moldict: 'PyObject *') -> "PyObject *":
+    """write_fill_angles(molpack, moldict) -> PyObject *"""
+    return _libpymolfile.write_fill_angles(molpack, moldict)
+
 def read_fill_next_timestep(molpack: 'PyObject *') -> "PyObject *":
     """read_fill_next_timestep(molpack) -> PyObject *"""
     return _libpymolfile.read_fill_next_timestep(molpack)
+
+def write_fill_timestep(molpack: 'PyObject *', moldict: 'PyObject *') -> "PyObject *":
+    """write_fill_timestep(molpack, moldict) -> PyObject *"""
+    return _libpymolfile.write_fill_timestep(molpack, moldict)
 
 def are_plugins_same(molpack_a: 'PyObject *', molpack_b: 'PyObject *') -> "PyObject *":
     """are_plugins_same(molpack_a, molpack_b) -> PyObject *"""

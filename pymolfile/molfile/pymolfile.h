@@ -22,6 +22,12 @@ extern "C"
 
 #endif
 
+#if PY_VERSION_HEX >= 0x03000000
+#define NUMPY_IMPORT_ARRAY_RETVAL NULL
+#else
+#define NUMPY_IMPORT_ARRAY_RETVAL
+#endif
+
 #include "molfile_plugin.h"
 #include "libmolfile_plugin.h"
 #include "vmdplugin.h"
@@ -257,9 +263,13 @@ static PyTypeObject MolObjectType = {
 
 PyObject * molfile_plugin_info(PyObject* molcapsule, int plugin_no);
 PyObject * read_fill_structure(PyObject* molpack, PyObject* prototype);
+PyObject * write_fill_structure(PyObject* molpack, PyObject* molarray);
 PyObject * read_fill_bonds(PyObject* molpack);
+PyObject * write_fill_bonds(PyObject* molpack, PyObject* moldict);
 PyObject * read_fill_angles(PyObject* molpack);
+PyObject * write_fill_angles(PyObject* molpack, PyObject* moldict);
 PyObject * read_fill_next_timestep(PyObject* molpack);
+PyObject * write_fill_timestep(PyObject* molpack, PyObject* moldict);
 PyObject * are_plugins_same(PyObject* molpack_a, PyObject* molpack_b);
 PyObject * are_filehandles_same(PyObject* molpack_a, PyObject* molpack_b);
 PyObject * get_plugin(PyObject* molcapsule, int plug_no);

@@ -14,7 +14,7 @@ message("GIT_EXECUTABLE='${GIT_EXECUTABLE}'")
 ExternalProject_Add(tng
                     PREFIX ${TNG_PREFIX}
                     GIT_REPOSITORY https://github.com/gromacs/tng.git
-		    GIT_TAG v1.7.6
+		    #GIT_TAG v1.7.6
                     INSTALL_DIR ${TNG_INSTALL_DIR}
                     CMAKE_ARGS ${TNG_CMAKE_ARGS} 
 		    CMAKE_COMMAND CFLAGS=-fPIC CXXFLAGS=-fPIC ${CMAKE_COMMAND}
@@ -24,4 +24,11 @@ ExternalProject_Add(tng
 add_custom_target(tngio_comp ALL
                   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/tng
 )
+
+ADD_CUSTOM_COMMAND(TARGET tng
+                POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory ${TNG_INSTALL_DIR}/lib64 ${TNG_INSTALL_DIR}/lib 
+                DEPENDS ${TNG_INSTALL_DIR}/lib64
+                COMMENT "Copying tng/lib64 to tng/lib"
+                )
 

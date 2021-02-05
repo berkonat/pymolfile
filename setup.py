@@ -90,7 +90,15 @@ class BuildExtWithoutPlatformSuffix(build_ext):
         filename = super().get_ext_filename(ext_name)
         return get_ext_filename_without_platform_suffix(filename)
 
-VERSION = "0.0.1"
+def check_tcl_version():
+    try:
+        output = subprocess.check_output("echo \"puts \$tcl_version;exit 0\" | tclsh", shell=True)
+        val = float(output)
+    except subprocess.CalledProcessError:
+        val = None
+    return val
+
+VERSION = "0.0.5"
 CLASSIFIERS = [
     "Development Status :: 1 - Alpha",
     "Intended Audience :: Science/Research",
@@ -109,7 +117,6 @@ CLASSIFIERS = [
     "Operating System :: Unix",
     "Operating System :: Microsoft :: Windows",
 ]
-
 
 # from MDAnalysis setup.py (http://www.mdanalysis.org/)
 class NumpyExtension(Extension, object):
@@ -169,8 +176,20 @@ def get_numpy_include():
     return numpy_include
 
 # from SimpleTraj setup.py (https://github.com/arose/simpletraj)
-
 if __name__ == '__main__':
+
+    tcl_version = None
+    tcl_version = check_tcl_version()
+    if tcl_version is None:
+        library_defs=['netcdf', 'expat']
+    else:
+        library_defs=['netcdf', 'expat', 'tcl']
+
+#    if sys.version_info < (3, 0):
+#        swig_opt_defs=['-Wall', '-c++']
+#    else:
+#        swig_opt_defs=['-py3', '-Wall', '-c++']
+    swig_opt_defs=['-py3', '-Wall', '-c++']
 
     libpymolfile_module = Extension(
             'pymolfile/molfile/_libpymolfile', 
@@ -178,13 +197,12 @@ if __name__ == '__main__':
                 'pymolfile/molfile/libpymolfile.i' , 
                 'pymolfile/molfile/pymolfile.cxx',
                 ],
-            swig_opts=['-py3', '-Wall', '-c++'],
+            swig_opts=swig_opt_defs,
             library_dirs=[
                 'build/external/tng/lib',
                 'build/molfile_plugins/compile/lib/'
                 ],
-            #libraries=['netcdf','expat','tcl'],
-            libraries=['netcdf','expat'],
+            libraries=library_defs,
             include_dirs = [
                 get_numpy_include(),
                 'pymolfile/molfile',
@@ -210,7 +228,7 @@ if __name__ == '__main__':
         version = VERSION,
         classifiers = CLASSIFIERS,
         license = "UIUC",
-        url = "https://gitlab.mpcdf.mpg.de/berko/pymolfile",
+        url = "https://gitlab.mpcdf.mpg.de/nomad-lab/pymolfile",
         zip_safe = False,
         packages = find_packages(),
         libraries = [('molfile_plugin', { 'sources' : ['build/molfile_plugins/compile/lib/libmolfile_plugin.a']})],
@@ -228,3 +246,5 @@ if __name__ == '__main__':
         install_requires = [ "numpy" ],
         extras_require = {}
     )
+ 
+

@@ -7,6 +7,9 @@ import re
 import sys
 import numpy as np
 from contextlib import contextmanager
+import platform
+import ctypes
+import tempfile
 import warnings
 
 if sys.version_info > (3,):
@@ -18,6 +21,18 @@ except ImportError:
     warnings.warn("libpymolfile package not available, pymolfile does not work without its library!")
 
 from .plugin_list import plugins, byte_str_decode, MOLFILE_PLUGINS, C_MOLFILE_PLUGINS
+
+if platform.system() == "Windows":
+    libc = ctypes.cdll.msvcrt
+else:
+    libc = ctypes.CDLL(None)
+
+if platform.system() == "Windows":
+    c_stdout = ctypes.c_void_p.in_dll(libc, 'stdout')
+elif "Darwin" in platform.system():
+    c_stdout = ctypes.c_void_p.in_dll(libc, '__stdoutp')
+else:
+    c_stdout = ctypes.c_void_p.in_dll(libc, 'stdout')
 
 def list_plugins():
     global MOLFILE_PLUGINS
@@ -49,6 +64,8 @@ def stdout_redirected(to=os.devnull):
     ####assert libc.fileno(ctypes.c_void_p.in_dll(libc, "stdout")) == fd == 1
 
     def _redirect_stdout(to):
+        # Flush the C-level buffer stdout
+        libc.fflush(c_stdout)
         sys.stdout.close() # + implicit flush()
         os.dup2(to.fileno(), fd) # fd writes to 'to' file
         sys.stdout = os.fdopen(fd, 'w') # Python writes to fd
@@ -62,6 +79,42 @@ def stdout_redirected(to=os.devnull):
             _redirect_stdout(to=old_stdout) # restore stdout.
                                             # buffering and flags such as
                                             # CLOEXEC may be different
+
+# The function stdout_redirect_stream is taken from 
+#https://eli.thegreenplace.net/2015/redirecting-all-kinds-of-stdout-in-python/
+
+@contextmanager
+def stdout_redirect_stream(stream):
+    # The original fd stdout points to. Usually 1 on POSIX systems.
+    original_stdout_fd = sys.stdout.fileno()
+
+    def _redirect_stdout(to_fd):
+        """Redirect stdout to the given file descriptor."""
+        # Flush the C-level buffer stdout
+        libc.fflush(c_stdout)
+        # Flush and close sys.stdout - also closes the file descriptor (fd)
+        sys.stdout.close()
+        # Make original_stdout_fd point to the same file as to_fd
+        os.dup2(to_fd, original_stdout_fd)
+        # Create a new sys.stdout that points to the redirected fd
+        sys.stdout = io.TextIOWrapper(os.fdopen(original_stdout_fd, 'wb'))
+
+    # Save a copy of the original stdout fd in saved_stdout_fd
+    saved_stdout_fd = os.dup(original_stdout_fd)
+    try:
+        # Create a temporary file and redirect stdout to it
+        tfile = tempfile.TemporaryFile(mode='w+b')
+        _redirect_stdout(tfile.fileno())
+        # Yield to caller, then redirect stdout back to the saved fd
+        yield
+        _redirect_stdout(saved_stdout_fd)
+        # Copy contents of temporary file to the given stream
+        tfile.flush()
+        tfile.seek(0, io.SEEK_SET)
+        stream.write(tfile.read())
+    finally:
+        tfile.close()
+        os.close(saved_stdout_fd)
 
 def get_dir_base_extension(file_name):
     """ Splits directory, file base and file extensions
@@ -90,6 +143,56 @@ def get_extension(file_name):
     """
     file_extension_with_dot  = os.path.splitext(os.path.basename(file_name))[1]
     return file_extension_with_dot.split(".")[-1]
+
+def get_fileExtensions(fname):
+    if fname is None:
+        fname = ''
+    if fname != '':
+        outList=[]
+        if '.' in fname:
+            base, ext = os.path.splitext(fname)
+            if base.startswith('.'):
+                base = base[1:]
+            if ext.startswith('.'):
+                ext = ext[1:]
+            if '.' in base:
+                baseList = get_fileExtensions(base)
+            else:
+                baseList = [base]
+            if '.' in ext:
+                extList = get_fileExtensions(ext)
+            else:
+                extList = [ext]
+            for bitem in baseList:
+                outList.append(bitem)
+            for eitem in extList:
+                outList.append(eitem)
+        return outList
+    else:
+        return None
+
+def get_zipType(tfile):
+    basename = os.path.basename(tfile)
+    exts=get_fileExtensions(basename)
+    if 'gz' in exts[-1]:
+        ttype = exts[-2]
+        ztype = 'gz'
+        zfile = basename.replace('.gz', '')
+    elif 'zip' in exts[-1]:
+        ttype = exts[-2]
+        ztype = 'zip'
+        zfile = basename.replace('.zip', '')
+    else:
+        ttype = exts[-1]
+        ztype = None
+        zfile = tfile
+    return ttype, zfile, ztype
+
+def get_extType(tfile):
+    basename = os.path.basename(tfile)
+    exts=get_fileExtensions(basename)
+    ttype = exts[-1]
+    return ttype
 
 def get_plugin_with_ext(file_ext):
     """ Search molfile plugins list and returns the plugin info 
@@ -206,11 +309,174 @@ class Topology(object):
         #if self.pluginhandle is not None:
         #    libpymolfile.close_file_read(self.pluginhandle)
 
+class WriteMolfile(object):
+
+    def __init__(self, molfile_handle):
+        self.handle = molfile_handle
+
+    def __enter__(self):
+        if self.handle.foutOpen is False:
+            global MOLFILE_PLUGINS
+            global C_MOLFILE_PLUGINS
+            #numlist = libpymolfile.molfile_init()
+            self.handle.wplugin = libpymolfile.get_plugin(C_MOLFILE_PLUGINS, 
+                    self.handle.wfplugin[0])
+            self.handle.wpluginhandle = None
+            if self.handle.topology:
+                self.handle.natoms = self.handle.topology.natoms
+            #if self.handle.trajectory:
+            #    rtn = self.handle.trajectory.iread() 
+            #    if self.handle.trajectory.atoms is not None and rtn is not None:
+            #        self.handle.natoms = len(self.handle.trajectory.atoms["coords"])
+            
+            if self.handle.kwords["silent"]:
+                with stdout_redirected():
+                    self.handle.wpluginhandle = libpymolfile.open_file_write(
+                            self.handle.wplugin, self.handle.wfname, 
+                            self.handle.wtype, self.handle.natoms)
+                    self.handle.foutOpen = True
+            else:
+                self.handle.wpluginhandle = libpymolfile.open_file_write(
+                        self.handle.wplugin, self.handle.wfname, 
+                        self.handle.wtype, self.handle.natoms)
+                self.handle.foutOpen = True
+
+        if self.handle.wpluginhandle is not None:
+            return self
+        else:
+            return None
+
+    def __exit__(self, type, value, traceback):
+        if self.handle.foutEOF:
+            if self.handle.foutOpen:
+                if self.handle.wpluginhandle is not None:
+                    rtn = libpymolfile.close_file_write(self.handle.wpluginhandle)
+                    if rtn:
+                        self.handle.wpluginhandle = None
+    
+    def write_topology(self):
+        status = False
+        bstatus = False
+        astatus = False
+        if self.handle.topology.bonds is not None:
+            if self.handle.wfplugin[1][7]>0:
+                bstatus = libpymolfile.write_fill_bonds(self.handle.wpluginhandle, self.handle.topology.bonds)
+        if self.handle.topology.angles is not None:
+            if self.handle.wfplugin[1][8]>0:
+                astatus = libpymolfile.write_fill_angles(self.handle.wpluginhandle, self.handle.topology.angles)
+        if self.handle.wfplugin[1][6]>0 and self.handle.topology.structure is not None:
+            prototype = molfile_prototype(self.handle.wtype)
+            newstructure = [
+                    (str(item[0]),
+                     str(item[1]),
+                     str(item[2]),
+                     int(item[3]),
+                     str(item[4]),
+                     str(item[5]),
+                     str(item[6]),
+                     str(item[7]),
+                     float(item[8]),
+                     float(item[9]),
+                     float(item[10]),
+                     float(item[11]),
+                     float(item[12]),
+                     int(item[13])
+                     ) if len(item)<15 else ( 
+                         str(item[0]),
+                         str(item[1]),
+                         str(item[2]),
+                         int(item[3]),
+                         str(item[4]),
+                         str(item[5]),
+                         str(item[6]),
+                         str(item[7]),
+                         float(item[8]),
+                         float(item[9]),
+                         float(item[10]),
+                         float(item[11]),
+                         float(item[12]),
+                         int(item[13]),
+                         int(item[14])
+                         ) for item in self.handle.topology.structure
+                     ]
+            thestructure = np.array(newstructure, dtype=prototype.dtype)
+            status = libpymolfile.write_fill_structure(self.handle.wpluginhandle, thestructure)
+        else:
+            status = True
+        return status
+
+    def write_trajectory(self):
+        if self.handle.wfplugin[1][9]>0 and self.handle.trajectory:
+            rtnOut = None
+            done = False
+            print("Writing Trajectory")
+            if self.handle.trajectory.atoms is not None:
+                rtnOut = libpymolfile.write_fill_timestep(self.handle.wpluginhandle, self.handle.trajectory.atoms)
+            while done is False:
+                rtn = self.handle.trajectory.iread() 
+                if self.handle.trajectory.atoms is not None and rtn is not None:
+                    print("Writing Trajectory")
+                    rtnOut = libpymolfile.write_fill_timestep(self.handle.wpluginhandle, self.handle.trajectory.atoms)
+                else:
+                    print("Done")
+                    done = True
+                    self.handle.foutEOF = True
+            return True
+        else:
+            self.handle.foutEOF = True
+            return True
+
+class OpenMolTraj(object):
+
+    def __init__(self, traj_handle):
+        self.handle = traj_handle
+
+    def __enter__(self):
+        if self.handle.finOpen is False:
+            global MOLFILE_PLUGINS
+            global C_MOLFILE_PLUGINS
+            numlist = libpymolfile.molfile_init()
+            self.handle.fplugin = libpymolfile.get_plugin(C_MOLFILE_PLUGINS, 
+                    self.handle.plugin[0])
+            self.handle.pluginhandle = None
+            
+            if self.handle.silent:
+                with stdout_redirected():
+                    self.handle.pluginhandle = libpymolfile.open_file_read(
+                            self.handle.fplugin, self.handle.fname, 
+                            self.handle.ftype, self.handle.natoms)
+                    self.handle.finOpen = True
+            else:
+                self.handle.pluginhandle = libpymolfile.open_file_read(
+                        self.handle.fplugin, self.handle.fname, 
+                        self.handle.ftype, self.handle.natoms)
+                self.handle.finOpen = True
+
+        if self.handle.pluginhandle is not None:
+            return self
+
+    def __exit__(self, type, value, traceback):
+        if self.handle.finEOF:
+            if self.handle.finOpen:
+                if self.handle.pluginhandle is not None:
+                    rtn = libpymolfile.close_file_read(self.handle.pluginhandle)
+                    if rtn:
+                        self.handle.pluginhandle = None
+                        del self.handle.pluginhandle
+
+    def read_next(self):
+        rtn = libpymolfile.read_fill_next_timestep(self.handle.pluginhandle)
+        if rtn is not None:
+            return rtn
+        else:
+            self.handle.finEOF = True
+            return rtn
+
 class Trajectory(object):
     
     def __init__(self, file_name, file_format, plugin, natoms, silent):
-        global MOLFILE_PLUGINS
-        global C_MOLFILE_PLUGINS
+        self.finEOF = False
+        self.finOpen = False
         self.natoms = None
         self.atoms = None
         self.plugin = None
@@ -218,49 +484,26 @@ class Trajectory(object):
         self.fname = None
         self.ftype = None
         self.fname = file_name
-        self.ftype = file_format
+        if file_format is None:
+            self.ftype = get_extType(file_name)
+        else:
+            self.ftype = file_format
         self.plugin = plugin
         self.natoms = 0
         self.silent = silent
 
-        if natoms is not None:
-            self.natoms = natoms
-
-        numlist = libpymolfile.molfile_init()
-        self.fplugin = libpymolfile.get_plugin(C_MOLFILE_PLUGINS, 
-                                          self.plugin[0])
-        self.pluginhandle = None
-
-        if self.natoms > 0:
-            try:
-                if self.silent:
-                    with stdout_redirected():
-                        self.pluginhandle = libpymolfile.open_file_read(self.fplugin, 
-                            self.fname, self.ftype, self.natoms)
-                else:
-                    self.pluginhandle = libpymolfile.open_file_read(self.fplugin, 
-                        self.fname, self.ftype, self.natoms)
-            except (IOError, OSError, AttributeError):
-                pass
-                #if self.pluginhandle is not None:
-                #    libpymolfile.close_file_read(self.pluginhandle)
-
-    def read_next(self):
-        return libpymolfile.read_fill_next_timestep(self.pluginhandle)
-
     def iter_on_traj(self):
-        try:
-            empty = False
-            self.step = 0
+        empty = False
+        self.step = 0
+        with OpenMolTraj(self) as f:
             while not empty:
-                x = self.read_next()
+                x = f.read_next()
                 if x is None:
                     empty = True
+                    self.finEOF = True
                 else:
                     self.step += 1
                     yield x
-        except (IOError, AttributeError, OSError):
-            return
 
     def iread(self):
         iter_obj = iter(self.iter_on_traj())
@@ -273,26 +516,63 @@ class Trajectory(object):
         finally:
             del iter_obj
 
-#    def read_frame(self, index_no):
-#        numlist = libpymolfile.molfile_init()
-#        tplugin = libpymolfile.get_plugin(C_MOLFILE_PLUGINS, 
-#                                          self.plugin[1])
-#        pluginhandle = libpymolfile.open_file_read(tplugin, 
-#            file_name, file_format, natoms)
-#        libpymolfile.molfile_finish()
+def molfile_prototype(file_format=None):
+    """ Generates a prototype numpy array that has the same struct 
+        definition as in molfile_atom_t arrays.
 
-#    def read(self, index_list, chunk=None):
-#        numlist = libpymolfile.molfile_init()
-#        tplugin = libpymolfile.get_plugin(C_MOLFILE_PLUGINS, 
-#                                          self.plugin[1])
-#        pluginhandle = libpymolfile.open_file_read(tplugin, 
-#            file_name, file_format, natoms)
-#        libpymolfile.molfile_finish()
+        Returns: numpy.array
+    """
+    if file_format is None:
+        file_format = ''
+    #if 0 && vmdplugin_ABIVERSION > 17
+    #  /* The new PDB file formats allows for much larger structures, */
+    #  /* which can therefore require longer chain ID strings.  The   */
+    #  /* new PDBx/mmCIF file formats do not have length limits on    */
+    #  /* fields, so PDB chains could be arbitrarily long strings     */
+    #  /* in such files.  At present, we know we need at least 3-char */
+    #  /* chains for existing PDBx/mmCIF files.                       */
+    #  char chain[4];      /**< required chain name, or ""            */
+    #else
+    #  char chain[2];      /**< required chain name, or ""            */
+    #endif
+    #
+    # Change 'chain', S2 to S4
+    #
+    #if('pdb' in file_format or
+    #   'psf' in file_format):
+    chain_size = 'S4'
+    #else:
+    #    chain_size = 'S2'
+    if('dtr' in file_format.lower() or 
+       'stk' in file_format.lower() or 
+       'atr' in file_format.lower()):
+       prototype = np.array([
+           ('','','',0,'','','','',1.0,1.0,1.0,1.0,1.0,6,0), 
+           ('','','',0,'','','','',1.0,1.0,1.0,1.0,1.0,6,0)
+           ],
+           dtype=[
+               ('name', 'S16'), ('type', 'S16'), ('resname', 'S8'),
+               ('resid', 'i4'), ('segid', 'S8'), ('chain', chain_size),
+               ('altloc', 'S2'), ('insertion', 'S2'), ('occupancy', 'f4'),
+               ('bfactor', 'f4'), ('mass', 'f4'), ('charge', 'f4'),
+               ('radius', 'f4'), ('atomicnumber', 'i4'), ('ctnumber', 'i4')
+               ]
+           )
+    else:
+       prototype = np.array([
+           ('','','',0,'','','','',1.0,1.0,1.0,1.0,1.0,6),
+           ('','','',0,'','','','',1.0,1.0,1.0,1.0,1.0,6)
+           ],
+           dtype=[
+               ('name', 'S16'), ('type', 'S16'), ('resname', 'S8'),
+               ('resid', 'i4'), ('segid', 'S8'), ('chain', chain_size),
+               ('altloc', 'S2'), ('insertion', 'S2'), ('occupancy', 'f4'),
+               ('bfactor', 'f4'), ('mass', 'f4'), ('charge', 'f4'),
+               ('radius', 'f4'), ('atomicnumber', 'i4')
+               ]
+           )
 
-    def __del__(self):
-        pass
-        #if self.pluginhandle is not None:
-        #    libpymolfile.close_file_read(self.pluginhandle)
+    return prototype
 
 def read_topology(file_name, file_format, plugin, silent):
     """ Reads structure, bonds, angles, dihedrals, impropers and 
@@ -321,53 +601,7 @@ def read_topology(file_name, file_format, plugin, silent):
        plugin is not None):
         natoms=0
         topo = Topology(plugin, file_name, file_format, natoms, silent)
-        #if 0 && vmdplugin_ABIVERSION > 17
-        #  /* The new PDB file formats allows for much larger structures, */
-        #  /* which can therefore require longer chain ID strings.  The   */
-        #  /* new PDBx/mmCIF file formats do not have length limits on    */
-        #  /* fields, so PDB chains could be arbitrarily long strings     */
-        #  /* in such files.  At present, we know we need at least 3-char */
-        #  /* chains for existing PDBx/mmCIF files.                       */
-        #  char chain[4];      /**< required chain name, or ""            */
-        #else
-        #  char chain[2];      /**< required chain name, or ""            */
-        #endif
-        #
-        # Change 'chain', S2 to S4
-        #
-        #if('pdb' in file_format or
-        #   'psf' in file_format):
-        chain_size = 'S4'
-        #else:
-        #    chain_size = 'S2'
-        if('dtr' in file_format or 
-           'stk' in file_format or 
-           'atr' in file_format):
-            prototype = np.array([
-                ('','','',0,'','','','',1.0,1.0,1.0,1.0,1.0,6,0), 
-                ('','','',0,'','','','',1.0,1.0,1.0,1.0,1.0,6,0)
-                ],
-                dtype=[
-                    ('name', 'S16'), ('type', 'S16'), ('resname', 'S8'),
-                    ('resid', 'i4'), ('segid', 'S8'), ('chain', chain_size),
-                    ('altloc', 'S2'), ('insertion', 'S2'), ('occupancy', 'f4'),
-                    ('bfactor', 'f4'), ('mass', 'f4'), ('charge', 'f4'),
-                    ('radius', 'f4'), ('atomicnumber', 'i4'), ('ctnumber', 'i4')
-                    ]
-                )
-        else:
-            prototype = np.array([
-                ('','','',0,'','','','',1.0,1.0,1.0,1.0,1.0,6),
-                ('','','',0,'','','','',1.0,1.0,1.0,1.0,1.0,6)
-                ],
-                dtype=[
-                    ('name', 'S16'), ('type', 'S16'), ('resname', 'S8'),
-                    ('resid', 'i4'), ('segid', 'S8'), ('chain', chain_size),
-                    ('altloc', 'S2'), ('insertion', 'S2'), ('occupancy', 'f4'),
-                    ('bfactor', 'f4'), ('mass', 'f4'), ('charge', 'f4'),
-                    ('radius', 'f4'), ('atomicnumber', 'i4')
-                    ]
-                )
+        prototype = molfile_prototype(file_format)
 
         if topo.read_structure(prototype) is not None:
             topo.structure = decode_array(topo._structure)
@@ -379,8 +613,12 @@ def read_topology(file_name, file_format, plugin, silent):
     if(topo.structure is not None or 
        topo.bonds is not None or
        topo.angles is not None):
+        if topo.pluginhandle is not None:
+            libpymolfile.close_file_read(topo.pluginhandle)
         return topo
     else:
+        if topo.pluginhandle is not None:
+            libpymolfile.close_file_read(topo.pluginhandle)
         del topo
         return None
 
@@ -402,7 +640,6 @@ class OpenMolfile(object):
 
     def __init__(self, *args, **kwargs):
         self.initialize_settings()
-        #super(OpenMolfile, self).__init__(*args, **kwargs)
         global MOLFILE_PLUGINS
         global C_MOLFILE_PLUGINS
         file_name = None
@@ -463,7 +700,6 @@ class OpenMolfile(object):
                                                       self.kwords["file_format"], 
                                                       self.smolplugin,
                                                       self.kwords["silent"])
-                        #libpymolfile.molfile_finish()
 
                 if(self.fplugin[1][2] == 0 or 
                    self.topology is None):
@@ -512,9 +748,10 @@ class OpenMolfile(object):
                                                                       self.kwords["silent"])
                                         #libpymolfile.molfile_finish()
                             else:
-                                warnings.warn("Pymolfile can not find a plugin to open the '" + 
-                                      self.kwords["topology_format"] + "' file format of the file " + 
-                                      self.kwords["topology"])
+                                if self.kwords["nowarnings"] is False:
+                                    warnings.warn("Pymolfile can not find a plugin to open the '" + 
+                                            self.kwords["topology_format"] + "' file format of the file " + 
+                                            self.kwords["topology"])
 
                 if self.fplugin[1][5] == 1:
                     num_atoms = 0
@@ -531,18 +768,43 @@ class OpenMolfile(object):
                                 num_atoms,
                                 self.kwords["silent"])
             else:
-                warnings.warn("Pymolfile can not find a plugin to open the '" + self.kwords["file_format"] + 
-                      "' file format of the file " + self.kwords["file_name"]) 
+                if self.kwords["nowarnings"] is False:
+                    warnings.warn("Pymolfile can not find a plugin to open the '" + self.kwords["file_format"] + 
+                            "' file format of the file " + self.kwords["file_name"]) 
+
+    def save(self, wfname, wtype=None):
+        self.wfname = wfname
+        if wtype is None:
+            file_dir, file_base, file_ext = get_dir_base_extension(wfname)
+            if file_ext:
+                self.wtype = file_ext
+            else:
+                self.wtype = file_base
+        else:
+            self.wtype = wtype
+        self.wfplugin = get_plugin_with_ext(wtype)
+        if self.wfplugin:
+            done = False
+            structOK = False
+            with WriteMolfile(self) as f:
+                if f:
+                    if self.wfplugin[1][6]>0:
+                        structOK = f.write_topology()
+                    if self.wfplugin[1][9]>0:
+                        done = f.write_trajectory()
 
     def initialize_settings(self):
-        #global MOLFILE_PLUGINS
-        #global C_MOLFILE_PLUGINS
-        #self.plugin_list = MOLFILE_PLUGINS
-        #self.c_plugin_list = C_MOLFILE_PLUGINS
+        self.foutEOF = False
+        self.foutOpen = False
         self.trajectory = None
         self.topology = None
         self.fplugin = None
         self.tplugin = None
+        self.wfname = None
+        self.wtype = None
+        self.wplugin = None
+        self.wfplugin = None
+        self.natoms = None
         self.smolplugin = None
         self.cmolplugin = None
         self.kwords = { 
@@ -553,17 +815,9 @@ class OpenMolfile(object):
             "topology_format" : None,
             "topology_plugin" : None,
             "natoms" : None,
-            "silent" : False
+            "silent" : False,
+            "nowarnings" : False
             }
-
-        #if not C_MOLFILE_PLUGINS:
-        #    C_MOLFILE_PLUGINS = libpymolfile.molfile_plugin_list(MAX_NUM_PLUGINS)
-        #if not MOLFILE_PLUGINS:
-        #    MOLFILE_PLUGINS = plugins()
-        #if(MOLFILE_PLUGINS and self.plugin_list is None):
-        #    self.plugin_list = MOLFILE_PLUGINS
-        #if(C_MOLFILE_PLUGINS and self.c_plugin_list is None):
-        #    self.c_plugin_list = C_MOLFILE_PLUGINS
 
     def reset_kwords(self):
         self.kwords.update({ 
@@ -574,11 +828,10 @@ class OpenMolfile(object):
             "topology_format" : None,
             "topology_plugin" : None,
             "natoms" : None,
-            "silent" : False
+            "silent" : False,
+            "nowarnings" : False
             })
 
     def __del__(self):
-        #del self.topology
-        #del self.trajectory
         libpymolfile.molfile_finish()
 
