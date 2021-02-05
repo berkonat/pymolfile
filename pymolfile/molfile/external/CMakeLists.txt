@@ -25,10 +25,11 @@ add_custom_target(tngio_comp ALL
                   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/tng
 )
 
+if (EXISTS ${TNG_INSTALL_DIR}/lib64)
 ADD_CUSTOM_COMMAND(TARGET tng
                 POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_directory ${TNG_INSTALL_DIR}/lib64 ${TNG_INSTALL_DIR}/lib 
                 DEPENDS ${TNG_INSTALL_DIR}/lib64
                 COMMENT "Copying tng/lib64 to tng/lib"
                 )
-
+endif()
