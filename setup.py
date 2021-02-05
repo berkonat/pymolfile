@@ -12,23 +12,32 @@ from distutils.version import LooseVersion
 try:
     from setuptools import setup, Extension, Command, find_packages
     from setuptools.command.install import install
-    from Cython.Build import cythonize
-    from Cython.Distutils import build_ext
+    from setuptools.command.build_clib import build_clib as _build_clib
+    from setuptools.command.build_ext import build_ext as _build_ext
 except:
     from distutils import setup, Extension, Command, find_packages
     from distutils.command.install import install
-    from Cython.Build import cythonize
-    from Cython.Distutils import build_ext
-    
-try:
-    from setuptools.command.build_clib import build_clib as _build_clib
-except:
     from distutils.command.build_clib import build_clib as _build_clib
+    from distutils.command.build_ext import build_ext as _build_ext
 
 class CMakeExtension(Extension):
     def __init__(self, name, sourcedir=''):
         Extension.__init__(self, name, sources=[])
         self.sourcedir = os.path.abspath(sourcedir)
+
+class build_ext(_build_ext):
+    def run(self):
+        if sys.platform == "darwin":
+            env = os.environ.copy()
+            current_DYLIB_PATH = env.get('DYLD_LIBRARY_PATH', '')
+            get_new_dylib = env.get('NETCDF_DYLIB_PATH', '')
+            if current_DYLIB_PATH == '':
+                env['DYLD_LIBRARY_PATH'] = get_new_dylib
+            else:
+                env['DYLD_LIBRARY_PATH'] = '{}:{}'.format(
+                    get_new_dylib, current_DYLIB_PATH)
+            print('DYLD_LIBRARY_PATH=',env['DYLD_LIBRARY_PATH'])
+        _build_ext.run(self)
 
 class build_clib(_build_clib):
     def run(self):
@@ -175,21 +184,24 @@ def get_numpy_include():
         numpy_include = np.get_numpy_include()
     return numpy_include
 
+
 # from SimpleTraj setup.py (https://github.com/arose/simpletraj)
 if __name__ == '__main__':
 
     tcl_version = None
     tcl_version = check_tcl_version()
-    if tcl_version is None:
-        library_defs=['netcdf', 'expat']
-    else:
-        library_defs=['netcdf', 'expat', 'tcl']
+    library_defs = ['netcdf']
+    #library_defs = []
+    library_defs.append('expat')
+    if tcl_version is not None:
+        library_defs.append('tcl')
 
-#    if sys.version_info < (3, 0):
-#        swig_opt_defs=['-Wall', '-c++']
-#    else:
-#        swig_opt_defs=['-py3', '-Wall', '-c++']
     swig_opt_defs=['-py3', '-Wall', '-c++']
+
+    set_extra_links = [
+        'build/molfile_plugins/compile/lib/libmolfile_plugin.a',
+        'build/external/tng/lib/libtng_io.a',
+    ]
 
     libpymolfile_module = Extension(
             'pymolfile/molfile/_libpymolfile', 
@@ -214,10 +226,7 @@ if __name__ == '__main__':
             extra_compile_args = [
                 '-fPIC', '-shared', '-O0', '-g', '-w' 
                 ],
-            extra_link_args = [
-                'build/molfile_plugins/compile/lib/libmolfile_plugin.a',
-                'build/external/tng/lib/libtng_io.a',
-                ],
+            extra_link_args = set_extra_links
             )
 
     setup(

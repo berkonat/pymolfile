@@ -4,7 +4,18 @@ include(ExternalProject)
 
 set(TNG_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/tng")
 set(TNG_INSTALL_DIR "${CMAKE_CURRENT_BINARY_DIR}/tng")
-set(TNG_CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${TNG_INSTALL_DIR} -DBUILD_SHARED_LIBS=OFF -DCFLAGS=-fPIC -DCXXFLAGS=-fPIC)
+
+if(Apple)
+set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp -L /usr/local/opt/libomp/lib -I /usr/local/opt/libomp/include -fPIC")
+set(OpenMP_C_LIB_NAMES "omp")
+set(OpenMP_omp_LIBRARY /usr/local/opt/libomp/lib/libomp.dylib)
+set(TNG_CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${TNG_INSTALL_DIR} -DTNG_BUILD_TEST=OFF -DTNG_BUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=OFF -DOpenMP_C_FLAGS=${OpenMP_C_FLAGS} -DOpenMP_C_LIB_NAMES=${OpenMP_C_LIB_NAMES} -DOpenMP_omp_LIBRARY=${OpenMP_omp_LIBRARY})
+set(TNG_CMAKE_COM_ARGS CFLAGS=${OpenMP_C_FLAGS} CXXFLAGS=${OpenMP_C_FLAGS})
+else()
+set(TNG_CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${TNG_INSTALL_DIR} -DTNG_BUILD_TEST=OFF -DTNG_BUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=OFF -DCFLAGS=-fPIC -DCXXFLAGS=-fPIC)
+set(TNG_CMAKE_COM_ARGS CFLAGS=-fPIC CXXFLAGS=-fPIC)
+endif()
+
 
 message("TNG_PREFIX='${TNG_PREFIX}'")
 message("TNG_INSTALL_DIR='${TNG_INSTALL_DIR}'")
@@ -17,7 +28,7 @@ ExternalProject_Add(tng
 		    #GIT_TAG v1.7.6
                     INSTALL_DIR ${TNG_INSTALL_DIR}
                     CMAKE_ARGS ${TNG_CMAKE_ARGS} 
-		    CMAKE_COMMAND CFLAGS=-fPIC CXXFLAGS=-fPIC ${CMAKE_COMMAND}
+		    CMAKE_COMMAND ${TNG_CMAKE_COM_ARGS} ${CMAKE_COMMAND}
 )
 
 
@@ -33,3 +44,4 @@ ADD_CUSTOM_COMMAND(TARGET tng
                 COMMENT "Copying tng/lib64 to tng/lib"
                 )
 endif()
+
