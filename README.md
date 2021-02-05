@@ -1,0 +1,2 @@
+# pymolfile
+PyMolfile
